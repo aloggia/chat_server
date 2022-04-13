@@ -7,7 +7,7 @@ use async_std::{
 };
 use futures::channel::mpsc;
 use futures::sink::SinkExt;
-use futures::{select, FutureExt};
+use futures::{select, FutureExt, StreamExt};
 use std::{
     collections::hash_map::{Entry, HashMap},
     future::Future,
@@ -41,6 +41,12 @@ fn main() {
         task::block_on(accept_loop("127.0.0.0:8080"))
     }
 
+    /*
+    accept_loop is listening on a port for incoming connection requests
+    when it recieves a request it first calls the spawn_log_errors function
+    to run in the background and gracefully catch any errors
+    It then calls the connection loop which lets the server read incoming data from spawned sockets
+     */
     async fn accept_loop(addr: impl ToSocketAddrs) -> Result<()> {
         let listener = TcpListener::bind(addr).await?;
         let (broker_sender, broker_receiver) = mpsc::unbounded();
@@ -58,11 +64,48 @@ fn main() {
         Ok(())
     }
 
+    /*
+    Listen to active sockets, data is read in through TcpStream, and is put in an Arc, which
+    is a thread safe wrapper that allows a shared pointer to a single resource
+    Reader is a buffer holding all the data that is read from the tcp stream
+    connection_loop is a listener, when it detects a new user it sends that users info in an enum
+    to broker loop, then it enters the listening loop where it waits for new messages from the client
+    broker is a channel to the broker_loop, so send any data that needs to get sent/added to hash_map
+    through the broker
+     */
     async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result<()> {
         let stream = Arc::new(stream);
         let reader = BufReader::new(&*stream);
         let mut lines = reader.lines();
 
+        // TODO: Add handshake logic here
+        let handshake = match lines.next().await {
+            None => Err("Incomplete handshake")?,
+            Some(line) => {
+                // Client sent the wrong message as the first part of the handshake
+                if line? != "HELLO\n" {
+                    Err("Incorrect handshake")?
+                } else if line? == "HELLO\n" {
+                    broker.send(Event::Message {
+                        source: stream.local_addr().to_string(),
+                        dest: vec![stream.peer_addr().to_string()],
+                        msg: "HELLO\n".parse().unwrap(),
+                    })
+                }
+            }
+        };
+        // At this point the server is ready to authenticate the client
+        // The client should now send an authentication message with a username and passwd
+        // we want to read in that line, parse the username & password then send both to a python file
+        /*
+         TODO: Is it possible for a python program to interact with this rust server?
+         If so: how can we pass data back and forth?
+         What needs to happen: If user's first time on server, then parse the next line as the user
+         registering => In this case pass the username and password into the python file
+         For just registering it'll always return true, so the program continues
+         If the program is logging in => it returns true should let the user continue through the program
+         false should send a message to the user saying they got rejected, then close their socket
+         */
         let name = match lines.next().await {
             None => Err("peer disconnected immediately")?,
             Some(line) => line?,
@@ -73,7 +116,7 @@ fn main() {
             stream: Arc::clone(&stream),
             shutdown: shutdown_receiver,
         }).await.unwrap();
-
+        // TODO: Modify to use UVMPM protocol
         while let Some(line) = lines.next().await {
             let line = line?;
             let (dest, msg) = match line.find(':') {
