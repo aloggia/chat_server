@@ -41,7 +41,23 @@ def add_user(username, passwd):
 
 
 def get_username(username):
-    pass
+    # TODO: Run username through sanatize to prevent sql injections
+    try:
+        conn = sqlite3.connect('credentials.db')
+        c = conn.cursor()
+        query = """SELECT * FROM credentials where username = ?"""
+        c.execute(query, (username, ))
+        records = c.fetchone()
+        names_to_return = records[0]
+    except sqlite3.DatabaseError:
+        print("Error. Could not retrieve data")
+    finally:
+        if c is not None:
+            c.close()
+        if conn is not None:
+            conn.close()
+        return names_to_return
+
 
 
 def get_passwd(username):
@@ -62,3 +78,7 @@ def hash_passwd(plaintext):
 
 def sanitize(in_word):
     pass
+
+
+if __name__ == '__main__':
+    print("Test Test")
