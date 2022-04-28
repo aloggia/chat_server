@@ -23,7 +23,21 @@ def create_db():
 
 
 def add_user(username, passwd):
-    pass
+    data_to_insert = [(username, hash_passwd(passwd))]
+    try:
+        conn = sqlite3.connect('credentials.db')
+        c = conn.cursor()
+        c.executemany("INSERT INTO credentials VALUES (? ,?)", data_to_insert)
+        conn.commit()
+    except sqlite3.IntegrityError:
+        print("Error. Tried to add duplicate record")
+    else:
+        print("Success")
+    finally:
+        if c is not None:
+            c.close()
+        if conn is not None:
+            conn.close()
 
 
 def get_username(username):
@@ -41,12 +55,10 @@ def is_user_in_system(username):
 def authenticate(hashed_pw, plaintext):
     pass
 
+
 def hash_passwd(plaintext):
     pass
 
 
 def sanitize(in_word):
     pass
-
-
-
