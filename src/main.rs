@@ -14,6 +14,7 @@ use std::{
     future::Future,
     sync::Arc,
     time::{Duration, Instant},
+    process::Command,
 };
 use std::io::Error;
 
@@ -100,12 +101,54 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
         Err("Incorrect Handshake")?;
     } else if handshake == "HELLO" {
         // TODO: Don't think I can send a message from server to client without the client being in the broker table
-        broker.send(Event::Message {
-            source: stream.local_addr().unwrap().to_string(),
-            dest: vec![stream.peer_addr().unwrap().to_string()],
-            msg: "HELLO\n".parse().unwrap(),
-        });
+        let name = match lines.next().await {
+            None => Err("peer disconnected immediately")?,
+            Some(line) => line?,
+        };
+        broker.send(Event::NewPeer {
+            name: name.clone(),
+            stream: Arc::clone(&stream),
+            shutdown: shutdown_receiver,
+        }).await.unwrap();
+
+        let mut check_name_output;
+        check_name_output = Command::new("python").arg("usersDatabase.py").arg("check_user").arg(name).output().expect("Check username failed");
+        if check_name_output.stdout[0] == 0 {
+            Ok(())
+        } else {
+            let mut password = match lines.next().await {
+                None => Err("No password sent from user")?,
+                Some(line) => line?,
+            };
+            let mut enter_password_output = Command::new("python")
+                .arg("usersDatabase.py")
+                .arg("enter_passwd")
+                .arg(&name)
+                .output()
+                .expect("Check password failed");
+            while enter_password_output.stdout[0] == 0 {
+                // Password is wrong, prompt user for new password
+                broker.send(Event::Message {
+                    source: stream.local_addr().unwrap().to_string(),
+                    dest: Vec![&name],
+                    msg: "PASSWDWRONG".parse().unwrap()
+                });
+                password = match lines.next().await {
+                    None => Err("No password sent from user")?,
+                    Some(line) => line?,
+                };
+                enter_password_output = Command::new("python")
+                    .arg("usersDatabase.py")
+                    .arg("enter_passwd")
+                    .arg(&name)
+                    .output()
+                    .expect("Check password failed");
+            }
+
+        }
+
     }
+
     // TODO: I THINK use drop(broker); broker.await; Ok(());
     // At this point the server is ready to authenticate the client
     // The client should now send an authentication message with a username and passwd
@@ -119,15 +162,7 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
      If the program is logging in => it returns true should let the user continue through the program
      false should send a message to the user saying they got rejected, then close their socket
      */
-    let name = match lines.next().await {
-        None => Err("peer disconnected immediately")?,
-        Some(line) => line?,
-    };
-    broker.send(Event::NewPeer {
-        name: name.clone(),
-        stream: Arc::clone(&stream),
-        shutdown: shutdown_receiver,
-    }).await.unwrap();
+
     // TODO: Modify to use UVMPM protocol
     while let Some(line) = lines.next().await {
         let line = line?;
