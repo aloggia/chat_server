@@ -3,6 +3,7 @@ import string
 import hashlib
 import os
 import random
+import sys
 
 
 def create_db():
@@ -117,10 +118,10 @@ def hash_passwd(plaintext):
 
 
 def sanitize(in_word):
-    bad_chars = ['%', '*', ';' , "'", '_', '^', '-', '[', ']', '"']
+    bad_chars = ['%', '*', ';', "'", '_', '^', '-', '[', ']', '"']
     list_pos = 0
     search_array = [char for char in in_word]
-    for illegal_char in search_array:
+    for illegal_char in bad_chars:
         list_pos = 0
         for search_char in search_array:
             if illegal_char == search_char:
@@ -131,4 +132,38 @@ def sanitize(in_word):
 
 
 if __name__ == '__main__':
-    print("Test Test")
+    # TODO: Command line args:
+    # Register user
+    # log in
+    create_db()
+    # command_arg = sys.argv[1]
+    command_arg = "is_in_system"
+    # username = sys.argv[2]
+    username = "ldion"
+    # password = sys.argv[3]
+    password = "fuckThisProject"
+
+    if command_arg == 'register':
+        # Run register user
+        #
+        add_user(sanitize(username), password)
+    if command_arg == 'is_in_system':
+        if is_user_in_system(username):
+            print('1')
+        else:
+            print('0')
+    if command_arg == 'log_in':
+        # Check if user is in system
+        if is_user_in_system(username):
+            # User is in system, Check the password
+            stored_password = get_passwd(username)
+            if authenticate(stored_password, password):
+                # Password is correct, pass the value 1 back to server program, the server interprets 1 as true
+                print("1")
+            else:
+                # Password is wrong
+                print('0')
+        else:
+            print('0')
+
+

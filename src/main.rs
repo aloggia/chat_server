@@ -114,7 +114,7 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
         let mut check_name_output;
         check_name_output = Command::new("python").arg("usersDatabase.py").arg("check_user").arg(name).output().expect("Check username failed");
         if check_name_output.stdout[0] == 0 {
-            Ok(())
+            return Ok(())
         } else {
             let mut password = match lines.next().await {
                 None => Err("No password sent from user")?,
@@ -130,7 +130,7 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
                 // Password is wrong, prompt user for new password
                 broker.send(Event::Message {
                     source: stream.local_addr().unwrap().to_string(),
-                    dest: Vec![&name],
+                    dest: vec![name],
                     msg: "PASSWDWRONG".parse().unwrap()
                 });
                 password = match lines.next().await {
