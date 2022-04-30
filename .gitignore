@@ -3,4 +3,4 @@
 .idea/
 Cargo.lock
 FinalPlanning.txt
-
+cmake-build-debug/
