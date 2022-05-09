@@ -90,115 +90,117 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
     let reader = BufReader::new(&*stream);
     let (_shutdown_sender, shutdown_receiver) = mpsc::unbounded::<Void>();
     let mut lines = reader.lines();
-    // TODO: Add handshake logic here
-    // TODO: Add a timeout -> If no handshake recieved in a unit of time, then close connection
     /*
-    idea: start timer
-    if time >= timeout_length { Ok(()) }
+    Handshake logic. In an ideal world I would have the server send a handshake response
+    But idk how to send a message directly to the client from the server
      */
-    let handshake = match lines.next().await {
-        None => Err("No handshake")?,
-        Some(line) => {line?},
+    let mut correct_handshake = false;
+    while !correct_handshake {
+        let handshake = match lines.next().await {
+            None => Err("No handshake")?,
+            Some(line) => { line? }
+        };
+        println!("{}", handshake);
+        if handshake == "HELLO" {
+            correct_handshake = true;
+        }
+        println!("{:?}", correct_handshake);
+    }
+    println!("Handshake successful");
+    // Don't think I can send a message from server to client without the client being in the broker table
+    let name = match lines.next().await {
+        None => Err("peer disconnected immediately")?,
+        Some(line) => line?,
     };
-    println!("{}", handshake);
-    if handshake != "HELLO" {
-        Err("Incorrect Handshake")?;
-    } else if handshake == "HELLO" {
-        // Don't think I can send a message from server to client without the client being in the broker table
-        let name = match lines.next().await {
-            None => Err("peer disconnected immediately")?,
+    broker.send(Event::NewPeer {
+        name: name.clone(),
+        stream: Arc::clone(&stream),
+        shutdown: shutdown_receiver,
+    }).await.unwrap();
+    let mut user_authenticated: bool = false;
+    // switch statement for cases: register, check_user, log_in
+    while !user_authenticated {
+        let username_passwd_incoming = match lines.next().await {
+            None => Err("User didn't send username & password")?,
             Some(line) => line?,
         };
-        broker.send(Event::NewPeer {
-            name: name.clone(),
-            stream: Arc::clone(&stream),
-            shutdown: shutdown_receiver,
-        }).await.unwrap();
-        let mut user_authenticated: bool = false;
-        // switch statement for cases: register, check_user, log_in
-        while !user_authenticated {
-            let username_passwd_incoming = match lines.next().await {
-                None => Err("User didn't send username & password")?,
-                Some(line) => line?,
-            };
-            let mut split = username_passwd_incoming.split(":");
-            let username_password: Vec<&str> = split.collect();
-            let mut check_name_output;
-            match username_password[0] {
-                "register" => {
-                    check_name_output = Command::new("python")
-                        .arg("userDatabase/main.py")
-                        .arg("register")
-                        .arg(username_password[1])
-                        .arg(username_password[2])
-                        .output()
-                        .expect("Failed to register user");
-                    println!("{:?}", String::from_utf8(check_name_output.stdout.clone()).unwrap());
-                    if String::from_utf8(check_name_output.stdout.clone()).unwrap() == "0\n" {
-                        user_authenticated = false;
-                    } else {
-                        user_authenticated = true;
-                    }
-                    println!("{:?}", user_authenticated);
+        let mut split = username_passwd_incoming.split(":");
+        let username_password: Vec<&str> = split.collect();
+        let mut check_name_output;
+        match username_password[0] {
+            "register" => {
+                check_name_output = Command::new("python")
+                    .arg("userDatabase/main.py")
+                    .arg("register")
+                    .arg(username_password[1])
+                    .arg(username_password[2])
+                    .output()
+                    .expect("Failed to register user");
+                println!("{:?}", String::from_utf8(check_name_output.stdout.clone()).unwrap());
+                if String::from_utf8(check_name_output.stdout.clone()).unwrap() == "0\n" {
+                    user_authenticated = false;
+                } else {
+                    user_authenticated = true;
                 }
-                "check_user" => {
-                    check_name_output = Command::new("python")
-                        .arg("userDatabase/main.py")
-                        .arg("check_user")
-                        .arg(username_password[1])
-                        .arg(username_password[2])
-                        .output()
-                        .expect("Failed to check user");
-                    println!("{:?}", String::from_utf8(check_name_output.stdout.clone()).unwrap());
-                    if String::from_utf8(check_name_output.stdout.clone()).unwrap() == "0\n" {
-                        user_authenticated = false;
-                    } else {
-                        user_authenticated = true;
-                    }
-                    println!("{:?}", user_authenticated);
-                }
-                "log_in" => {
-                    check_name_output = Command::new("python")
-                        .arg("userDatabase/main.py")
-                        .arg("log_in")
-                        .arg(username_password[1])
-                        .arg(username_password[2])
-                        .output()
-                        .expect("Failed to log user in");
-                    println!("{:?}", String::from_utf8(check_name_output.stdout.clone()).unwrap());
-                    if String::from_utf8(check_name_output.stdout.clone()).unwrap() == "0\n" {
-                        user_authenticated = false;
-                    } else {
-                        user_authenticated = true;
-                    }
-                    println!("{:?}", user_authenticated);
-                }
-                &_ => {println!("Reached default database access case")}
+                println!("{:?}", user_authenticated);
             }
+            "check_user" => {
+                check_name_output = Command::new("python")
+                    .arg("userDatabase/main.py")
+                    .arg("check_user")
+                    .arg(username_password[1])
+                    .arg(username_password[2])
+                    .output()
+                    .expect("Failed to check user");
+                println!("{:?}", String::from_utf8(check_name_output.stdout.clone()).unwrap());
+                if String::from_utf8(check_name_output.stdout.clone()).unwrap() == "0\n" {
+                    user_authenticated = false;
+                } else {
+                    user_authenticated = true;
+                }
+                println!("{:?}", user_authenticated);
+            }
+            "log_in" => {
+                check_name_output = Command::new("python")
+                    .arg("userDatabase/main.py")
+                    .arg("log_in")
+                    .arg(username_password[1])
+                    .arg(username_password[2])
+                    .output()
+                    .expect("Failed to log user in");
+                println!("{:?}", String::from_utf8(check_name_output.stdout.clone()).unwrap());
+                if String::from_utf8(check_name_output.stdout.clone()).unwrap() == "0\n" {
+                    user_authenticated = false;
+                } else {
+                    user_authenticated = true;
+                }
+                println!("{:?}", user_authenticated);
+            }
+            &_ => { println!("Reached default database access case") }
         }
-        println!("Left switch statment");
-        broker.send(Event::Message {
-            source: stream.local_addr().unwrap().to_string(),
-            dest: vec![stream.peer_addr().unwrap().to_string()],
-            msg: "Howdy doody!".parse().unwrap(),
-        }).await.unwrap();
-        println!("Message should have been sent");
-        while let Some(line) = lines.next().await {
-            let line = line?;
-            let (dest, msg) = match line.find(':') {
-                None => continue,
-                Some(idx) => (&line[..idx], line[idx + 1..].trim()),
-            };
-            let dest: Vec<String> = dest.split(',').map(|name| name.trim().to_string()).collect();
-            let msg: String = msg.trim().to_string();
-            broker.send(Event::Message {
-                source: name.clone(),
-                dest,
-                msg,
-            }).await.unwrap();
-        }
-
     }
+    println!("Left switch statment");
+    broker.send(Event::Message {
+        source: stream.local_addr().unwrap().to_string(),
+        dest: vec![stream.peer_addr().unwrap().to_string()],
+        msg: "Howdy doody!".parse().unwrap(),
+    });
+    println!("Message should have been sent");
+    while let Some(line) = lines.next().await {
+        let line = line?;
+        let (dest, msg) = match line.find(':') {
+            None => continue,
+            Some(idx) => (&line[..idx], line[idx + 1..].trim()),
+        };
+        let dest: Vec<String> = dest.split(',').map(|name| name.trim().to_string()).collect();
+        let msg: String = msg.trim().to_string();
+        broker.send(Event::Message {
+            source: name.clone(),
+            dest,
+            msg,
+        }).await.unwrap();
+    }
+
 
     Ok(())
 }
