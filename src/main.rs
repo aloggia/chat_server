@@ -110,13 +110,51 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
             stream: Arc::clone(&stream),
             shutdown: shutdown_receiver,
         }).await.unwrap();
+        let mut user_authenticated: bool = false;
         // TODO: switch statment for cases: register, check_user, log_in
-        let username_passwd_incoming = match lines.next().await {
-            None => Err("User didn't send username & password")?,
-            Some(line) => line?,
-        };
-        let mut split = username_passwd_incoming.split(":");
-        let username_password: Vec<&str> = split.collect();
+        while !user_authenticated {
+            let username_passwd_incoming = match lines.next().await {
+                None => Err("User didn't send username & password")?,
+                Some(line) => line?,
+            };
+            let mut split = username_passwd_incoming.split(":");
+            let username_password: Vec<&str> = split.collect();
+            let mut check_name_output;
+            match username_password[0] {
+                "register" => {
+                    check_name_output = Command::new("python")
+                        .arg("userDatabase/main.py")
+                        .arg("register")
+                        .arg(username_password[1])
+                        .arg(username_password[2])
+                        .output()
+                        .expect("Failed to register user");
+                    println!("{:?}", String::from_utf8(check_name_output.stdout.clone()).unwrap());
+                    if String::from_utf8(check_name_output.stdout.clone()).unwrap() == "0\n" {
+                        user_authenticated = false
+                    } else {
+                        user_authenticated = true
+                    }
+                }
+                "check_user" => {
+                    check_name_output = Command::new("python")
+                        .arg("userDatabase/main.py")
+                        .arg("check_user")
+                        .arg(username_password[1])
+                        .arg(username_password[2])
+                        .output()
+                        .expect("Failed to check user");
+                    println!("{:?}", String::from_utf8(check_name_output.stdout.clone()).unwrap());
+                    if String::from_utf8(check_name_output.stdout.clone()).unwrap() == "0\n" {
+                        user_authenticated = false
+                    } else {
+                        user_authenticated = true
+                    }
+                }
+                "log_in" => {}
+                &_ => {}
+            }
+        }
         println!("{:?}", username_password);
         let mut check_name_output;
         check_name_output = Command::new("python")
