@@ -1,5 +1,6 @@
 #![allow(unused)]
 
+// Chat server structure is copied from: https://book.async.rs/tutorial/handling_disconnection.html
 use async_std::{
     io::BufReader,
     net::{TcpListener, TcpStream, ToSocketAddrs},
@@ -22,7 +23,7 @@ use std::io::Error;
 fn main() {
     run();
 }
-
+// These are all channels to send messages between threads
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 type Sender<T> = mpsc::UnboundedSender<T>;
 type Receiver<T> = mpsc::UnboundedReceiver<T>;
@@ -30,6 +31,10 @@ type Receiver<T> = mpsc::UnboundedReceiver<T>;
 #[derive(Debug)]
 enum Void {}
 
+/*
+There are 2 different things that can happen while the server is running, a user can connect
+and a user can send a message, this enum allows for pattern matching to both events
+ */
 #[derive(Debug)]
 enum Event {
     NewPeer {
@@ -46,11 +51,12 @@ enum Event {
 }
 
 fn run() -> Result<()> {
-    // Put the Servers IP address here, idk what it is yet
+    // Put the Servers IP address here
     let args: Vec<String> = env::args().collect();
     let address = format!("{}:{}", args[1], args[2]);
     println!("{:?}", address);
-    task::block_on(accept_loop("192.168.1.195:8080"))
+    // Accept loop run in it's own thread
+    task::block_on(accept_loop(address))
 }
 
 /*
@@ -60,10 +66,12 @@ to run in the background and gracefully catch any errors
 It then calls the connection loop which lets the server read incoming data from spawned sockets
  */
 async fn accept_loop(addr: impl ToSocketAddrs) -> Result<()> {
+    // listen to a tcp socket for a new connection
     let listener = TcpListener::bind(addr).await?;
     let (broker_sender, broker_receiver) = mpsc::unbounded();
     let broker_handle = task::spawn(broker_loop(broker_receiver));
     let mut incoming = listener.incoming();
+    // Socket heard a new incoming connection
     while let Some(stream) = incoming.next().await {
         // unwrap the stream to extract the stream from the result wrapper
         let stream = stream?;
@@ -108,6 +116,7 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
     }
     println!("Handshake successful");
     // Don't think I can send a message from server to client without the client being in the broker table
+    // Add the user to the broker table, to allow the user to log in
     let name = match lines.next().await {
         None => Err("peer disconnected immediately")?,
         Some(line) => line?,
@@ -119,7 +128,10 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
     }).await.unwrap();
     let mut user_authenticated: bool = false;
     // switch statement for cases: register, check_user, log_in
+    // Rather then pass true/false through pipes, the python program prints 0 if it did it's job
+    // successfully, or a 1 if it didn't do it's job successfully
     while !user_authenticated {
+        // line will be in format pythonRequest:username:password
         let username_passwd_incoming = match lines.next().await {
             None => Err("User didn't send username & password")?,
             Some(line) => line?,
@@ -129,6 +141,7 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
         let mut check_name_output;
         match username_password[0] {
             "register" => {
+                // run the python program
                 check_name_output = Command::new("python")
                     .arg("userDatabase/main.py")
                     .arg("register")
@@ -137,6 +150,7 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
                     .output()
                     .expect("Failed to register user");
                 println!("{:?}", String::from_utf8(check_name_output.stdout.clone()).unwrap());
+                // check it's output
                 if String::from_utf8(check_name_output.stdout.clone()).unwrap() == "0\n" {
                     user_authenticated = false;
                 } else {
@@ -145,6 +159,7 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
                 println!("{:?}", user_authenticated);
             }
             "check_user" => {
+                // run python program
                 check_name_output = Command::new("python")
                     .arg("userDatabase/main.py")
                     .arg("check_user")
@@ -153,6 +168,7 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
                     .output()
                     .expect("Failed to check user");
                 println!("{:?}", String::from_utf8(check_name_output.stdout.clone()).unwrap());
+                // Check python output
                 if String::from_utf8(check_name_output.stdout.clone()).unwrap() == "0\n" {
                     user_authenticated = false;
                 } else {
@@ -161,6 +177,7 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
                 println!("{:?}", user_authenticated);
             }
             "log_in" => {
+                // Run python program
                 check_name_output = Command::new("python")
                     .arg("userDatabase/main.py")
                     .arg("log_in")
@@ -169,6 +186,7 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
                     .output()
                     .expect("Failed to log user in");
                 println!("{:?}", String::from_utf8(check_name_output.stdout.clone()).unwrap());
+                // Check it's output
                 if String::from_utf8(check_name_output.stdout.clone()).unwrap() == "0\n" {
                     user_authenticated = false;
                 } else {
@@ -176,24 +194,26 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
                 }
                 println!("{:?}", user_authenticated);
             }
+            // Default base case
             &_ => { println!("Reached default database access case") }
         }
     }
-    println!("Left switch statment");
-    broker.send(Event::Message {
-        source: stream.local_addr().unwrap().to_string(),
-        dest: vec![stream.peer_addr().unwrap().to_string()],
-        msg: "Howdy doody!".parse().unwrap(),
-    });
-    println!("Message should have been sent");
+    println!("Left switch statement");
+    /*
+    Message logic, wait for the client to send a message, then process it when recieved
+     */
     while let Some(line) = lines.next().await {
+        // Unwrap line
         let line = line?;
+        // split the message into destination(s) and message body
         let (dest, msg) = match line.find(':') {
             None => continue,
             Some(idx) => (&line[..idx], line[idx + 1..].trim()),
         };
+        // capture the destination(s) in a vector with a closure
         let dest: Vec<String> = dest.split(',').map(|name| name.trim().to_string()).collect();
         let msg: String = msg.trim().to_string();
+        // Send the message to the broker
         broker.send(Event::Message {
             source: name.clone(),
             dest,
@@ -211,12 +231,15 @@ async fn connection_writer_loop(messages: &mut Receiver<String>,
     let mut stream = &*stream;
     let mut messages = messages.fuse();
     let mut shutdown = shutdown.fuse();
+    // Will loop until there are no more messages to send, and select! chooses shutdown
     loop {
         select! {
+            // Send messages in queue
                 msg = messages.next().fuse() => match msg {
                     Some(msg) => stream.write_all(msg.as_bytes()).await?,
                     None => break,
                 },
+            // Shutdown the connection
                 void = shutdown.next().fuse() => match void {
                     Some(void) => match void {},
                     None => break,
@@ -225,7 +248,7 @@ async fn connection_writer_loop(messages: &mut Receiver<String>,
     }
     Ok(())
 }
-
+// Error catching bucket, prints all errors to console rather than crash program
 fn spawn_log_errors<F>(fut: F) -> task::JoinHandle<()>
     where
         F: Future<Output=Result<()>> + Send + 'static,
@@ -243,8 +266,10 @@ async fn broker_loop(events: Receiver<Event>) {
         mpsc::unbounded::<(String, Receiver<String>)>();
     let mut peers: HashMap<String, Sender<String>> = HashMap::new();
     let mut events = events.fuse();
+    // Loops until there are no more events
     loop {
         let event = select! {
+            // Either do the next event in the events queue, or close the connection
                 event = events.next().fuse() => match event {
                     None => break,
                     Some(event) => event,
@@ -256,6 +281,8 @@ async fn broker_loop(events: Receiver<Event>) {
                 },
             };
         match event {
+            // If the next event is a message, look up the destination channels in the hash table
+            // and send the message out through the destination channels
             Event::Message { source, dest, msg } => {
                 for addr in dest {
                     if let Some(peer) = peers.get_mut(&addr) {
@@ -265,9 +292,12 @@ async fn broker_loop(events: Receiver<Event>) {
                     }
                 }
             }
+            // If the next event is a new user, add them to the hashmap
             Event::NewPeer { name, stream, shutdown } => {
                 match peers.entry(name.clone()) {
+                    // If user is already logged on, do nothing
                     Entry::Occupied(..) => (),
+                    // Otherwise hash them into the hashtable
                     Entry::Vacant(entry) => {
                         let (client_sender, mut client_receiver) = mpsc::unbounded();
                         entry.insert(client_sender);
@@ -284,6 +314,7 @@ async fn broker_loop(events: Receiver<Event>) {
             }
         }
     }
+    // When there are no more events, all the peers will be dropped and the server will shutdown
     drop(peers);
     drop(disconnect_sender);
     while let Some((_name, _pending_messages)) = disconnect_receiver.next().await {}
