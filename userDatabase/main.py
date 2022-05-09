@@ -35,9 +35,11 @@ def add_user(username, passwd):
         c.executemany("INSERT INTO credentials VALUES (? ,?)", data_to_insert)
         conn.commit()
     except sqlite3.IntegrityError:
-        print("Error. Tried to add duplicate record")
+        # print("Error. Tried to add duplicate record")
+        pass
     else:
-        print("Success")
+        # print("Success")
+        pass
     finally:
         if c is not None:
             c.close()
@@ -55,7 +57,8 @@ def get_username(username):
         records = c.fetchone()
         names_to_return = records[0]
     except sqlite3.DatabaseError:
-        print("Error. Could not retrieve data")
+        # print("Error. Could not retrieve data")
+        pass
     finally:
         if c is not None:
             c.close()
@@ -74,7 +77,8 @@ def get_passwd(username):
         records = c.fetchone()
         passwd = records[1]
     except sqlite3.DatabaseError:
-        print("Error. Could not retrieve data")
+        # print("Error. Could not retrieve data")
+        pass
     finally:
         if c is not None:
             c.close()
@@ -93,7 +97,8 @@ def is_user_in_system(username):
             if user == row[0]:
                 is_in = True
     except sqlite3.DatabaseError:
-        print("Error. Could not retrieve data")
+        # print("Error. Could not retrieve data")
+        pass
     finally:
         if c is not None:
             c.close()
@@ -136,18 +141,18 @@ if __name__ == '__main__':
     # Register user
     # log in
     create_db()
-    # command_arg = sys.argv[1]
-    command_arg = "is_in_system"
-    # username = sys.argv[2]
-    username = "ldion"
-    # password = sys.argv[3]
-    password = "fuckThisProject"
+    command_arg = sys.argv[1]
+    # command_arg = "is_in_system"
+    username = sys.argv[2]
+    # username = "ldion"
+    password = sys.argv[3]
+    # password = "fuckThisProject"
 
     if command_arg == 'register':
         # Run register user
         #
         add_user(sanitize(username), password)
-    if command_arg == 'is_in_system':
+    if command_arg == 'check_user':
         if is_user_in_system(username):
             print('1')
         else:

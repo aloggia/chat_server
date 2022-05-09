@@ -46,7 +46,7 @@ enum Event {
 
 fn run() -> Result<()> {
     // Put the Servers IP address here, idk what it is yet
-    task::block_on(accept_loop("192.168.1.193:8080"))
+    task::block_on(accept_loop("192.168.1.195:8080"))
 }
 
 /*
@@ -100,7 +100,7 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
     if handshake != "HELLO" {
         Err("Incorrect Handshake")?;
     } else if handshake == "HELLO" {
-        // TODO: Don't think I can send a message from server to client without the client being in the broker table
+        // Don't think I can send a message from server to client without the client being in the broker table
         let name = match lines.next().await {
             None => Err("peer disconnected immediately")?,
             Some(line) => line?,
@@ -110,73 +110,79 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
             stream: Arc::clone(&stream),
             shutdown: shutdown_receiver,
         }).await.unwrap();
-
+        // TODO: switch statment for cases: register, check_user, log_in
+        let username_passwd_incoming = match lines.next().await {
+            None => Err("User didn't send username & password")?,
+            Some(line) => line?,
+        };
+        let mut split = username_passwd_incoming.split(":");
+        let username_password: Vec<&str> = split.collect();
+        println!("{:?}", username_password);
         let mut check_name_output;
-        check_name_output = Command::new("python").arg("usersDatabase.py").arg("check_user").arg(name).output().expect("Check username failed");
-        if check_name_output.stdout[0] == 0 {
+        check_name_output = Command::new("python")
+            .arg("userDatabase/main.py")
+            .arg("check_user")
+            .arg(username_password[0])
+            .arg(username_password[1])
+            .output()
+            .expect("Check username failed");
+        println!("{:?}", check_name_output.stdout);
+        println!("{:?}", String::from_utf8(check_name_output.stdout.clone()).unwrap());
+        if String::from_utf8(check_name_output.stdout.clone()).unwrap() == "0\n" {
+            println!("Disconnecting, not in system");
             return Ok(())
         } else {
             let mut password = match lines.next().await {
                 None => Err("No password sent from user")?,
                 Some(line) => line?,
             };
+            println!("{:?}", &password);
             let mut enter_password_output = Command::new("python")
-                .arg("usersDatabase.py")
-                .arg("enter_passwd")
+                .arg("userDatabase/main.py")
+                .arg("log_in")
                 .arg(&name)
                 .output()
                 .expect("Check password failed");
-            while enter_password_output.stdout[0] == 0 {
+            println!("{:?}", String::from_utf8(enter_password_output.stdout.clone()).unwrap());
+            while String::from_utf8(enter_password_output.stdout.clone()).unwrap() == "0\n" {
                 // Password is wrong, prompt user for new password
                 broker.send(Event::Message {
                     source: stream.local_addr().unwrap().to_string(),
-                    dest: vec![name],
-                    msg: "PASSWDWRONG".parse().unwrap()
+                    dest: vec![name.clone()],
+                    msg: "LOGINFAIL".parse().unwrap()
                 });
-                password = match lines.next().await {
-                    None => Err("No password sent from user")?,
+                let username_passwd_incoming = match lines.next().await {
+                    None => Err("User didn't send username & password")?,
                     Some(line) => line?,
                 };
+                let mut split = username_passwd_incoming.split(":");
+                let username_password: Vec<&str> = split.collect();
                 enter_password_output = Command::new("python")
-                    .arg("usersDatabase.py")
-                    .arg("enter_passwd")
-                    .arg(&name)
+                    .arg("userDatabase/main.py")
+                    .arg("log_in")
+                    .arg(username_password[0])
+                    .arg(username_password[1])
                     .output()
                     .expect("Check password failed");
+                println!("{:?}", String::from_utf8(enter_password_output.stdout.clone()).unwrap());
             }
 
         }
+        while let Some(line) = lines.next().await {
+            let line = line?;
+            let (dest, msg) = match line.find(':') {
+                None => continue,
+                Some(idx) => (&line[..idx], line[idx + 1..].trim()),
+            };
+            let dest: Vec<String> = dest.split(',').map(|name| name.trim().to_string()).collect();
+            let msg: String = msg.trim().to_string();
+            broker.send(Event::Message {
+                source: name.clone(),
+                dest,
+                msg,
+            }).await.unwrap();
+        }
 
-    }
-
-    // TODO: I THINK use drop(broker); broker.await; Ok(());
-    // At this point the server is ready to authenticate the client
-    // The client should now send an authentication message with a username and passwd
-    // we want to read in that line, parse the username & password then send both to a python file
-    /*
-     TODO: Is it possible for a python program to interact with this rust server?
-     If so: how can we pass data back and forth?
-     What needs to happen: If user's first time on server, then parse the next line as the user
-     registering => In this case pass the username and password into the python file
-     For just registering it'll always return true, so the program continues
-     If the program is logging in => it returns true should let the user continue through the program
-     false should send a message to the user saying they got rejected, then close their socket
-     */
-
-    // TODO: Modify to use UVMPM protocol
-    while let Some(line) = lines.next().await {
-        let line = line?;
-        let (dest, msg) = match line.find(':') {
-            None => continue,
-            Some(idx) => (&line[..idx], line[idx + 1..].trim()),
-        };
-        let dest: Vec<String> = dest.split(',').map(|name| name.trim().to_string()).collect();
-        let msg: String = msg.trim().to_string();
-        broker.send(Event::Message {
-            source: name.clone(),
-            dest,
-            msg,
-        }).await.unwrap();
     }
 
     Ok(())
