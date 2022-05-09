@@ -8,7 +8,7 @@ use async_std::{
 };
 use futures::channel::mpsc;
 use futures::sink::SinkExt;
-use futures::{select, FutureExt, StreamExt};
+use futures::{select, FutureExt, StreamExt, AsyncBufReadExt};
 use std::{
     collections::hash_map::{Entry, HashMap},
     future::Future,
@@ -64,6 +64,7 @@ async fn accept_loop(addr: impl ToSocketAddrs) -> Result<()> {
     let (broker_sender, broker_receiver) = mpsc::unbounded();
     let broker_handle = task::spawn(broker_loop(broker_receiver));
     let mut incoming = listener.incoming();
+    spawn_log_errors(server_connection_loop(broker_sender.clone(), TcpStream::connect(addr.clone())));
     while let Some(stream) = incoming.next().await {
         // unwrap the stream to extract the stream from the result wrapper
         let stream = stream?;
@@ -73,6 +74,27 @@ async fn accept_loop(addr: impl ToSocketAddrs) -> Result<()> {
     }
     drop(broker_sender);
     broker_handle.await;
+    Ok(())
+}
+
+async fn server_connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result<()> {
+
+    let stream = Arc::new(stream);
+    let reader = BufReader::new(&*stream);
+    let (_shutdown_sender, shutdown_receiver) = mpsc::unbounded::<Void>();
+    let mut lines = reader.lines();
+    broker.send(Event::NewPeer {
+        name: "Server".parse().unwrap(),
+        stream: Arc::clone(&stream),
+        shutdown: shutdown_receiver,
+    }).await.unwrap();
+
+    let line = match lines.next().await {
+        None => Err("No message sent to server")?,
+        Some(line) => line?,
+    };
+    match line { }
+
     Ok(())
 }
 
@@ -180,12 +202,13 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
         }
     }
     println!("Left switch statment");
-    broker.send(Event::Message {
+/*    broker.send(Event::Message {
         source: stream.local_addr().unwrap().to_string(),
         dest: vec![stream.peer_addr().unwrap().to_string()],
         msg: "Howdy doody!".parse().unwrap(),
     });
-    println!("Message should have been sent");
+    println!("Message should have been sent");*/
+    println!("{:?} {:?}", stream.local_addr()?.to_string(), stream.peer_addr()?.to_string());
     while let Some(line) = lines.next().await {
         let line = line?;
         let (dest, msg) = match line.find(':') {
